@@ -1,0 +1,10 @@
+[package]
+name = "bevy_commodore"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.16.1"
+derive_more = { version = "2.0.1", features = ["from"] }
+internment = "0.8.6"
+itertools = "0.14.0"
