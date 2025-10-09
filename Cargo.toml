@@ -2,9 +2,21 @@
 name = "bevy_commodore"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
+description = "A text command framework for the bevy engine."
+homepage = "https://github.com/SunkenPotato/bevy_commodore"
+repository = "https://github.com/SunkenPotato/bevy_commodore"
+readme = "README.md"
+keywords = ["bevy"]
 
 [dependencies]
-bevy = "0.16.1"
+bevy = { version = "0.16.1", features = [], default-features = false }
 derive_more = { version = "2.0.1", features = ["from"] }
 internment = "0.8.6"
 itertools = "0.14.0"
+
+[dev-dependencies]
+bevy_ui_text_input = "0.5.2"
+
+[[example]]
+name = "example"

@@ -31,7 +31,7 @@ use internment::Intern;
 
 use derive_more::From;
 
-use crate::{builtins::Identifier, stored_sys::StoredSystem};
+use crate::{builtins::args::Identifier, stored_sys::StoredSystem};
 
 /// A system representing a command handler.
 pub type CommandHandler = StoredSystem<In<CommandContext>, CommandResult>;
@@ -48,6 +48,12 @@ type DynamicArgumentParser =
 ///
 /// Commands may be added with the [`CommandPlugin::register_command`]. \
 /// Argument types may be added with the [`CommandPlugin::register_argument`].
+///
+/// Multiple instances of this plugin may be added to the same app,
+/// but the generic parameters `I` and `O` must differ from any other existing ones.
+/// The `I` parameter is used for the `CommandInput` event, and the `O` parameter is used for the `CommandOutput` event.
+///
+/// Other resources and registries used by this plugin are also parametrised with the `I` and `O` parameters.
 pub struct CommandPlugin<I = (), O = ()> {
     /// Marker for the generic fields, which are only used to differentiate between these plugins.
     _p: PhantomData<(I, O)>,
@@ -142,16 +148,21 @@ where
     /// Creates a new command plugin with no commands and no parsers.
     ///
     /// To add the default `help` command, call [`CommandPlugin::with_default_commands`]. \
-    /// To add the default arguments, call [`CommandPlugin::with_default_arguments`].
+    /// To add the default arguments, call [`CommandPlugin::with_default_args`].
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Register a command.
+    /// Register a command. The command handler will run on the [`Update`] schedule, as the dispatcher is registered to the same schedule.
     #[expect(clippy::missing_panics_doc)]
     pub fn register_command(&self, command: CommandBuilder) -> &Self {
-        self.commands.lock().unwrap().insert(command);
+        let mut commands = self.commands.lock().unwrap();
+        assert!(
+            !commands.contains(&command),
+            "Cannot add the a command with the same name"
+        );
+        commands.insert(command);
         self
     }
 
@@ -177,7 +188,7 @@ where
         let mut help_cmd = CommandBuilder::new(
             "help",
             Some("Display help for all commands or the command name passed"),
-            builtins::help_cmd_handler::<I, O>,
+            builtins::cmd::help_cmd_handler::<I, O>,
         );
 
         help_cmd.with_argument::<Identifier>(
@@ -187,6 +198,15 @@ where
         );
 
         self.register_command(help_cmd)
+    }
+
+    /// Register the "default" argument types to this plugin.
+    ///
+    /// The default argument types are the ones in the [`builtins::args`] module.
+    pub fn with_default_args(&self) -> &Self {
+        self.register_argument::<Identifier>()
+            .register_argument::<String>()
+            .register_argument::<i32>()
     }
 
     // exclusive access to world to run the handlers
@@ -214,8 +234,8 @@ where
         };
 
         let arg_registry = world.resource::<ArgumentRegistry<I, O>>();
-        let args = match command.parse(arg_registry, body) {
-            Ok(v) => v.1,
+        let (args, handler) = match command.parse(arg_registry, body) {
+            Ok(v) => (v.args, v.handler),
             Err(e) => {
                 world
                     .resource_mut::<Events<OutputEvent<O>>>()
@@ -230,7 +250,7 @@ where
             arguments: args,
         };
 
-        let result = world.run_system_with(command.handler, ctx).unwrap();
+        let result = world.run_system_with(handler, ctx).unwrap();
         let string = Arc::into_inner(sink).unwrap().into_inner().unwrap();
         let output = match result {
             CommandResult::Ok => OutputEvent::Ok(string),
@@ -330,9 +350,12 @@ impl ParseError {
 
     /// Provide a cause for this error.
     #[must_use]
-    pub fn with_cause(self, cause: impl std::error::Error + Send + Sync + 'static) -> Self {
+    pub fn with_cause(
+        self,
+        cause: impl Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    ) -> Self {
         Self {
-            cause: Some(Box::new(cause)),
+            cause: Some(cause.into()),
             ..self
         }
     }
@@ -359,15 +382,10 @@ pub trait Argument: Any {
     where
         Self: Sized;
 
-    /// A friendly, user-facing type name. Usually, the default implementation ([`std::any::type_name`]) is sufficient, however,
-    /// implementors should consider using a different one for types whose names are programmer-facing.
-    #[must_use]
+    /// A friendly, user-facing type name. This is used, e.g., in the `help` command. The recommended style for this is lowercase.
     fn type_name() -> &'static str
     where
-        Self: Sized,
-    {
-        std::any::type_name::<Self>()
-    }
+        Self: Sized;
 }
 
 /// A parsed argument instance.
@@ -601,14 +619,25 @@ pub struct RegisteredCommand {
     nodes: Vec<RegisteredCommandNode>,
 }
 
+/// The product of a successful command parser.
+struct CommandParseOutput<'a> {
+    /// The rest of the string. This is only used internally, and can be ignored when directly calling [`RegisteredCommand::parse`].
+    rest: &'a str,
+    /// The parsed arguments.
+    args: HashMap<Intern<str>, ArgumentInstance>,
+    /// The command handler. This is the last subcommand parsed.
+    handler: RegisteredCommandHandler,
+}
+
 impl RegisteredCommand {
     /// Parse a registered command, according to its node layout.
     fn parse<'b, I, O>(
         &self,
         arg_registry: &ArgumentRegistry<I, O>,
         mut body: &'b str,
-    ) -> Result<(&'b str, HashMap<Intern<str>, ArgumentInstance>), RouterError> {
+    ) -> Result<CommandParseOutput<'b>, RouterError> {
         let mut args = HashMap::new();
+        let mut handler = self.handler;
 
         for node in &self.nodes {
             let rest = match node {
@@ -627,9 +656,10 @@ impl RegisteredCommand {
 
                     match scg.iter().find(|v| v.name == ident.0) {
                         Some(v) => {
-                            let (rest, sc_args) = v.parse(arg_registry, rest)?;
-                            args.extend(sc_args);
-                            rest
+                            let info = v.parse(arg_registry, rest)?;
+                            args.extend(info.args);
+                            handler = info.handler;
+                            info.rest
                         }
                         None => return Err(RouterError::UnknownSubcommand),
                     }
@@ -639,6 +669,10 @@ impl RegisteredCommand {
             body = rest.trim();
         }
 
-        Ok((body, args))
+        Ok(CommandParseOutput {
+            rest: body,
+            args,
+            handler,
+        })
     }
 }
