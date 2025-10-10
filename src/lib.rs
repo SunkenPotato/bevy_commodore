@@ -9,6 +9,9 @@
 pub mod builtins;
 pub mod stored_sys;
 
+#[cfg(test)]
+mod tests;
+
 use std::{
     any::{Any, TypeId},
     collections::{HashMap, HashSet},
@@ -500,7 +503,8 @@ pub struct CommandBuilder {
 impl CommandBuilder {
     /// Create a new command.
     ///
-    /// + `name`: The name of this command
+    /// + `name`: The name of this command. This currently may not begin with a digit (`'0'..='9'`) and may otherwise only contain the characters
+    ///   `'a'..='z'`, `'A'..='Z'`, `'0'..='9'`, and `_`. This limitation may be lifted in the future.
     /// + `description`: An optional description for this subcommand
     /// + `handler`: The handler system for this command. This must be a system that takes at minimum an `In<CommandContext>`.
     ///
@@ -518,10 +522,19 @@ impl CommandBuilder {
     ///
     /// CommandBuilder::new("empty", None, |v: In<CommandContext>| todo!());
     /// ```
+    ///
+    /// # Panics
+    /// Panics if the name does not match the above specified predicate.
     pub fn new<S, M>(name: &str, description: Option<&str>, handler: S) -> Self
     where
         S: IntoSystem<In<CommandContext>, CommandResult, M> + Send + Sync + 'static,
     {
+        if name.contains(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            || name.starts_with(|c: char| c.is_ascii_digit())
+        {
+            panic!("invalid command name");
+        }
+
         Self {
             name: name.into(),
             description: description.map(Into::into),
