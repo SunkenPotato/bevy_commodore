@@ -1,6 +1,6 @@
 //! A text command handler for the Bevy engine.
 //!
-//! The core API of this library is the [`CommandBuilder`] struct.
+//! The core API of this library are the [`CommandBuilder`] and the [`CommandPlugin`] structs.
 
 #![forbid(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -44,7 +44,7 @@ type DynamicArgumentParser =
 /// A command plugin. This registers:
 /// + all commands registered to this plugin
 /// + events with the supplied markers, which are `()` by default
-/// + a router system to handle input events.
+/// + a dispatcher system to handle input events and dispatch commands.
 ///
 /// Commands may be added with the [`CommandPlugin::register_command`]. \
 /// Argument types may be added with the [`CommandPlugin::register_argument`].
@@ -481,6 +481,9 @@ impl SubcommandGroupBuilder {
 
 /// A command builder.
 ///
+/// Commands are comprised of a tree of command nodes, a command name, an optional command description, and a handler system. Handler systems may behave like normal systems, except that they must receive the
+/// [`In<CommandContext>`] parameter and return [`CommandResult`].
+///
 /// The order that command nodes (argument or subcommand group) are added with their respective `with_` methods determines the order they are parsed in,
 /// and therefore the layout of the command.
 pub struct CommandBuilder {
@@ -499,7 +502,22 @@ impl CommandBuilder {
     ///
     /// + `name`: The name of this command
     /// + `description`: An optional description for this subcommand
-    /// + `handler`: The handler system for this command. This must be a system that takes at minimum an `In<CommandContext>`
+    /// + `handler`: The handler system for this command. This must be a system that takes at minimum an `In<CommandContext>`.
+    ///
+    /// A common error when using this with a closure as a handler is when one omits the type of `In<CommandContext>`, e.g.:
+    /// ```compile_fail
+    /// use bevy_commodore::CommandBuilder;
+    ///
+    /// // rust cannot correctly determine the type of the closure when the type of `v` is omitted.
+    /// CommandBuilder::new("empty", None, |v| todo!());
+    /// ```
+    /// In this case, simply add the type to the closure:
+    /// ```rust
+    /// use bevy::prelude::In;
+    /// use bevy_commodore::{CommandBuilder, CommandContext};
+    ///
+    /// CommandBuilder::new("empty", None, |v: In<CommandContext>| todo!());
+    /// ```
     pub fn new<S, M>(name: &str, description: Option<&str>, handler: S) -> Self
     where
         S: IntoSystem<In<CommandContext>, CommandResult, M> + Send + Sync + 'static,
@@ -513,15 +531,14 @@ impl CommandBuilder {
     }
 
     /// Add an argument node to this command. Arguments are stored - and therefore parsed - in the order that they are passed to this function.
-    pub fn with_argument<T>(
+    ///
+    /// `T` must be an argument type that has been registered to the plugin.
+    pub fn with_argument<T: Argument>(
         &mut self,
         name: &str,
         description: Option<&str>,
         optional: bool,
-    ) -> &mut Self
-    where
-        T: Argument,
-    {
+    ) -> &mut Self {
         self.nodes.push(CommandNode::Argument(ArgumentDefinition {
             name: name.into(),
             description: description.map(Into::into),
@@ -532,9 +549,9 @@ impl CommandBuilder {
         self
     }
 
-    /// Add a subcommand group node to this command.
+    /// Add a subcommand group node to this command. A subcommand group node is a group of subcommands, from which the user may select one.
     ///
-    /// This method takes a closure which is passed a `&mut SubcommandGroupBuilder`. The additions made to said builder are used for the subcommand.
+    /// This method takes a closure which is passed a `&mut SubcommandGroupBuilder`.
     ///
     /// # Panics
     /// This method panics if no subcommands were added to the [`SubcommandGroupBuilder`].

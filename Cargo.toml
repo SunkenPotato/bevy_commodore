@@ -2,7 +2,7 @@
 name = "bevy_commodore"
 version = "0.1.0"
 edition = "2024"
-license-file = "LICENSE"
+license = "MIT"
 description = "A text command framework for the bevy engine."
 homepage = "https://github.com/SunkenPotato/bevy_commodore"
 repository = "https://github.com/SunkenPotato/bevy_commodore"
