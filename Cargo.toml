@@ -16,7 +16,7 @@ internment = "0.8.6"
 itertools = "0.14.0"
 
 [dev-dependencies]
-bevy_ui_text_input = "0.5.2"
+bevy_ui_text_input = "0.6.0-rc.1"
 
 [[example]]
 name = "example"

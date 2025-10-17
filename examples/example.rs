@@ -1,16 +1,17 @@
 use bevy::{
     DefaultPlugins,
     app::{App, Startup, Update},
+    camera::Camera2d,
     color::palettes::css::NAVY,
-    core_pipeline::core_2d::Camera2d,
     ecs::{
         component::Component,
-        event::{EventReader, EventWriter},
+        message::{MessageReader, MessageWriter},
         query::With,
         resource::Resource,
         schedule::IntoScheduleConfigs,
         system::{Commands, In, Res, ResMut, Single},
     },
+    math::Vec2,
     state::{
         app::AppExtStates,
         condition::in_state,
@@ -24,7 +25,7 @@ use bevy_commodore::{
     OutputEvent, ParseError,
 };
 use bevy_ui_text_input::{
-    TextInputMode, TextInputNode, TextInputPlugin, TextInputPrompt, TextSubmitEvent,
+    SubmitText, TextInputMode, TextInputNode, TextInputPlugin, TextInputPrompt,
 };
 
 use std::{
@@ -128,7 +129,8 @@ fn distance_cmd_handler(In(mut ctx): In<CommandContext>) -> CommandResult {
     let pos1 = ctx.argument::<PositionArgumentType>("pos1");
     let pos2 = ctx.argument::<PositionArgumentType>("pos2");
 
-    let distance = (((pos1.x - pos2.x).pow(2) + (pos1.y + pos2.y).pow(2)) as f32).sqrt();
+    let distance =
+        Vec2::new(pos1.x as f32, pos1.y as f32).distance(Vec2::new(pos2.x as f32, pos2.y as f32));
     _ = writeln!(
         ctx,
         "The distance between ({}; {}) and ({}; {}) is {}",
@@ -250,8 +252,8 @@ impl Argument for PositionArgumentType {
 }
 
 fn text_receiver(
-    mut text: EventReader<TextSubmitEvent>,
-    mut command_input: EventWriter<CommandInput>,
+    mut text: MessageReader<SubmitText>,
+    mut command_input: MessageWriter<CommandInput>,
     mut next_state: ResMut<NextState<TextInputState>>,
     mut text_input: Single<&mut TextInputNode>,
 ) {
@@ -263,7 +265,7 @@ fn text_receiver(
 }
 
 fn command_output_writer(
-    mut fdbk: EventReader<OutputEvent>,
+    mut fdbk: MessageReader<OutputEvent>,
     mut output_field: Single<&mut Text, With<FeedbackMarker>>,
     mut text_input: Single<&mut TextInputNode>,
     mut next_state: ResMut<NextState<TextInputState>>,
