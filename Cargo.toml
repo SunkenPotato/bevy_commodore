@@ -10,13 +10,13 @@ readme = "README.md"
 keywords = ["bevy"]
 
 [dependencies]
-bevy = { version = "0.16.1", features = [], default-features = false }
+bevy = { version = "0.17.2", features = [], default-features = false }
 derive_more = { version = "2.0.1", features = ["from"] }
 internment = "0.8.6"
 itertools = "0.14.0"
 
 [dev-dependencies]
-bevy_ui_text_input = "0.5.2"
+bevy_ui_text_input = "0.6.0-rc.1"
 
 [[example]]
 name = "example"
