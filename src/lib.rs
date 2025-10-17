@@ -2,6 +2,7 @@
 //!
 //! The core API of this library are the [`CommandBuilder`] and the [`CommandPlugin`] structs.
 
+#![feature(never_type)]
 #![forbid(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 #![warn(clippy::pedantic)]
@@ -23,9 +24,9 @@ use std::{
 use bevy::{
     app::{App, Plugin, Update},
     ecs::{
-        event::{Event, EventCursor, Events},
+        message::{Message, MessageCursor, Messages},
         resource::Resource,
-        system::{In, IntoSystem, SystemId},
+        system::{In, IntoResult, IntoSystem, SystemId},
         world::World,
     },
 };
@@ -98,8 +99,8 @@ where
     O: Send + Sync + 'static,
 {
     fn build(&self, app: &mut bevy::app::App) {
-        app.add_event::<CommandInput<I>>();
-        app.add_event::<OutputEvent<O>>();
+        app.add_message::<CommandInput<I>>();
+        app.add_message::<OutputEvent<O>>();
         app.init_resource::<PluginEventCursor<I>>();
 
         let types = self.types.lock().unwrap().drain().collect();
@@ -121,11 +122,11 @@ where
 
 /// Tracker for read events, since a system with exclusive [`World`] access cannot have `Local`s, which prevents storing the normal cursor.
 #[derive(Resource)]
-struct PluginEventCursor<I: Send + Sync + 'static>(EventCursor<CommandInput<I>>);
+struct PluginEventCursor<I: Send + Sync + 'static>(MessageCursor<CommandInput<I>>);
 
 impl<I: Send + Sync + 'static> Default for PluginEventCursor<I> {
     fn default() -> Self {
-        Self(EventCursor::default())
+        Self(MessageCursor::default())
     }
 }
 
@@ -215,7 +216,7 @@ where
     // exclusive access to world to run the handlers
     #[allow(clippy::missing_docs_in_private_items)]
     fn router(world: &mut World) {
-        world.resource_scope::<Events<CommandInput<I>>, _>(|world, events| {
+        world.resource_scope::<Messages<CommandInput<I>>, _>(|world, events| {
             world.resource_scope::<PluginEventCursor<I>, _>(|world, mut cursor| {
                 for event in cursor.0.read(&*events) {
                     Self::subrouter(event, world);
@@ -231,8 +232,8 @@ where
         let registry = world.resource::<CommandRegistry<I, O>>();
         let Some(command) = registry.commands.get(&name.into()) else {
             world
-                .resource_mut::<Events<OutputEvent<O>>>()
-                .send(OutputEvent::RouterError(RouterError::UnknownCommand));
+                .resource_mut::<Messages<OutputEvent<O>>>()
+                .write(OutputEvent::RouterError(RouterError::UnknownCommand));
             return;
         };
 
@@ -241,8 +242,8 @@ where
             Ok(v) => (v.args, v.handler),
             Err(e) => {
                 world
-                    .resource_mut::<Events<OutputEvent<O>>>()
-                    .send(OutputEvent::RouterError(e));
+                    .resource_mut::<Messages<OutputEvent<O>>>()
+                    .write(OutputEvent::RouterError(e));
                 return;
             }
         };
@@ -260,12 +261,14 @@ where
             CommandResult::Err => OutputEvent::CommandError(string),
         };
 
-        world.resource_mut::<Events<OutputEvent<O>>>().send(output);
+        world
+            .resource_mut::<Messages<OutputEvent<O>>>()
+            .write(output);
     }
 }
 
 /// A text supplier for the command plugin.
-#[derive(Event)]
+#[derive(Message)]
 pub struct CommandInput<I = ()> {
     /// The input string.
     s: String,
@@ -282,7 +285,7 @@ impl<I> CommandInput<I> {
 }
 
 /// Indicates the output and result of a command, sent by the command plugin.
-#[derive(Event, Debug)]
+#[derive(Message, Debug)]
 pub enum OutputEvent<O = ()> {
     /// The command was successful.
     Ok(String),
@@ -373,6 +376,14 @@ pub enum CommandResult {
     Ok = 1,
     /// The command was unsuccessful.
     Err = 0,
+}
+
+impl IntoResult<CommandResult> for ! {
+    fn into_result(
+        self,
+    ) -> bevy::ecs::error::Result<CommandResult, bevy::ecs::system::RunSystemError> {
+        unreachable!()
+    }
 }
 
 /// Defines a parser for argument types, as well as providing downcast for them.
